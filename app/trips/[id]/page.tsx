@@ -1,6 +1,6 @@
    'use client'
 
-   import { useEffect, useState } from 'react'
+   import { useEffect, useState, useRef } from 'react'
    import { useParams, useRouter } from 'next/navigation'
    import { supabase } from '@/lib/supabase'
 
@@ -46,6 +46,13 @@
      amount: number
    }
 
+    type ChatMessage = {
+     id: string
+     sender_id: string
+     content: string
+     created_at: string
+   }
+
    export default function TripPage() {
      const params = useParams()
      const router = useRouter()
@@ -74,6 +81,10 @@
      const [expSplitWith, setExpSplitWith] = useState<string[]>([])
      const [expMessage, setExpMessage] = useState('')
 
+    const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+    const [chatInput, setChatInput] = useState('')
+    const chatEndRef = useRef<HTMLDivElement>(null)
+
      useEffect(() => {
        supabase.auth.getSession().then(({ data }) => {
          if (!data.session) {
@@ -84,9 +95,32 @@
            fetchMembers()
            fetchItinerary()
            fetchExpensesAndSplits()
+           fetchChatMessages()
          }
        })
      }, [tripId])
+
+        useEffect(() => {
+     const channel = supabase
+       .channel(`chat:${tripId}`)
+       .on(
+         'postgres_changes',
+         { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `trip_id=eq.${tripId}` },
+         (payload) => {
+           setChatMessages((prev) => [...prev, payload.new as ChatMessage])
+         }
+       )
+       .subscribe()
+
+     return () => {
+       supabase.removeChannel(channel)
+     }
+   }, [tripId])
+
+      useEffect(() => {
+     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+   }, [chatMessages])
+
 
      async function fetchTrip() {
        const { data, error } = await supabase.from('trips').select('*').eq('id', tripId).single()
@@ -146,6 +180,27 @@
          .in('expense_id', (expenseData ?? []).map((e) => e.id))
        if (!splitError && splitData) setSplits(splitData)
      }
+
+    async function fetchChatMessages() {
+     const { data, error } = await supabase
+       .from('chat_messages')
+       .select('*')
+       .eq('trip_id', tripId)
+       .order('created_at', { ascending: true })
+     if (!error && data) setChatMessages(data)
+   }
+    
+        async function handleSendMessage() {
+     if (!chatInput.trim()) return
+     const { error } = await supabase.from('chat_messages').insert({
+       trip_id: tripId,
+       sender_id: currentUserId,
+       content: chatInput.trim(),
+     })
+     if (!error) {
+       setChatInput('')
+     }
+   }
 
      async function handleAddItem() {
        if (!itemTitle.trim()) {
@@ -416,8 +471,32 @@
            </ul>
          )}
 
-         <hr style={{ margin: '1.5rem 0' }} />
-         <p><em>Chat and photos will go here.</em></p>
+             <hr style={{ margin: '1.5rem 0' }} />
+
+    <h2>Chat</h2>
+    <div style={{ border: '1px solid #333', height: '250px', overflowY: 'auto', padding: '1rem', marginBottom: '1rem' }}>
+      {chatMessages.map((msg) => (
+        <div key={msg.id} style={{ margin: '0.5rem 0' }}>
+          <strong>{displayName(msg.sender_id)}:</strong> {msg.content}
+        </div>
+      ))}
+      <div ref={chatEndRef} />
+    </div>
+    <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <input
+        type="text"
+        placeholder="Type a message..."
+        value={chatInput}
+        onChange={(e) => setChatInput(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') handleSendMessage() }}
+        style={{ flex: 1, padding: '0.5rem' }}
+      />
+      <button onClick={handleSendMessage} style={{ padding: '0.5rem 1rem' }}>Send</button>
+    </div>
+
+    <hr style={{ margin: '1.5rem 0' }} />
+    <p><em>Shared photo album will go here.</em></p>
+
        </main>
      )
    }
