@@ -53,6 +53,13 @@
      created_at: string
    }
 
+  type Photo = {
+     id: string
+     storage_path: string
+     uploaded_by: string
+     caption: string | null
+   }
+
    export default function TripPage() {
      const params = useParams()
      const router = useRouter()
@@ -85,6 +92,10 @@
     const [chatInput, setChatInput] = useState('')
     const chatEndRef = useRef<HTMLDivElement>(null)
 
+    const [photos, setPhotos] = useState<Photo[]>([])
+    const [uploading, setUploading] = useState(false)
+    const [photoMessage, setPhotoMessage] = useState('')
+
      useEffect(() => {
        supabase.auth.getSession().then(({ data }) => {
          if (!data.session) {
@@ -96,6 +107,7 @@
            fetchItinerary()
            fetchExpensesAndSplits()
            fetchChatMessages()
+           fetchPhotos()
          }
        })
      }, [tripId])
@@ -150,6 +162,56 @@
        }
      }
 
+    async function fetchPhotos() {
+     const { data, error } = await supabase
+       .from('photos')
+       .select('*')
+       .eq('trip_id', tripId)
+       .order('created_at', { ascending: false })
+     if (!error && data) setPhotos(data)
+   }
+
+   function getPhotoUrl(path: string) {
+     const { data } = supabase.storage.from('trip-photos').getPublicUrl(path)
+     return data.publicUrl
+   }
+
+   async function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+     const file = e.target.files?.[0]
+     if (!file) return
+
+     setUploading(true)
+     setPhotoMessage('')
+
+     const fileExt = file.name.split('.').pop()
+     const filePath = `${tripId}/${crypto.randomUUID()}.${fileExt}`
+
+     const { error: uploadError } = await supabase.storage
+       .from('trip-photos')
+       .upload(filePath, file)
+
+     if (uploadError) {
+       setPhotoMessage(`Error: ${uploadError.message}`)
+       setUploading(false)
+       return
+     }
+
+     const { error: insertError } = await supabase.from('photos').insert({
+       trip_id: tripId,
+       uploaded_by: currentUserId,
+       storage_path: filePath,
+     })
+
+     if (insertError) {
+       setPhotoMessage(`Error: ${insertError.message}`)
+     } else {
+       setPhotoMessage('Photo uploaded!')
+       fetchPhotos()
+     }
+
+     setUploading(false)
+   }
+    
      function displayName(userId: string | null) {
        if (!userId) return 'Unknown'
        if (userId === currentUserId) return 'You'
@@ -494,8 +556,27 @@
       <button onClick={handleSendMessage} style={{ padding: '0.5rem 1rem' }}>Send</button>
     </div>
 
-    <hr style={{ margin: '1.5rem 0' }} />
-    <p><em>Shared photo album will go here.</em></p>
+       <hr style={{ margin: '1.5rem 0' }} />
+
+   <h2>Shared Photo Album</h2>
+   <input
+     type="file"
+     accept="image/*"
+     onChange={handlePhotoUpload}
+     disabled={uploading}
+     style={{ marginBottom: '1rem' }}
+   />
+   <p>{uploading ? 'Uploading...' : photoMessage}</p>
+   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
+     {photos.map((photo) => (
+       <img
+         key={photo.id}
+         src={getPhotoUrl(photo.storage_path)}
+         alt="Trip photo"
+         style={{ width: '100%', height: '120px', objectFit: 'cover', borderRadius: '4px' }}
+       />
+     ))}
+   </div>
 
        </main>
      )
